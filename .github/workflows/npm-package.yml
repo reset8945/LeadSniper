@@ -1,0 +1,39 @@
+name: npm package check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  package-check:
+    strategy:
+      matrix:
+        os: [macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Test installers and dispatcher
+        run: npm test
+
+      - name: Check npm package contents
+        run: npm run pack:check
+
+      - name: Verify macOS runtime signature
+        if: runner.os == 'macOS'
+        run: codesign --verify --deep --strict packages/macos/LeadSniper
+
+      - name: Verify Windows runtime starts
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 2
+        run: packages\windows\LeadSniper.exe --help

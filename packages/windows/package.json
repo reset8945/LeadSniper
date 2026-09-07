@@ -1,0 +1,21 @@
+{
+  "name": "leadsniper-win",
+  "version": "0.1.0",
+  "description": "Install the prebuilt LeadSniper Skill for Windows x64 into Hermes, OpenClaw, Claude Code, or Codex.",
+  "license": "SEE LICENSE IN LICENSE",
+  "homepage": "https://github.com/reset8945/LeadSniper#readme",
+  "repository": {"type": "git", "url": "git+https://github.com/reset8945/LeadSniper.git"},
+  "bugs": {"url": "https://github.com/reset8945/LeadSniper/issues"},
+  "bin": {"leadsniper-win": "bin/leadsniper-win.cjs"},
+  "files": ["bin/leadsniper-win.cjs", "LeadSniper.exe", "start_chrome_debug.bat", "SKILL.md", "README.md", "LICENSE"],
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "engines": {"node": ">=18", "npm": ">=9"},
+  "scripts": {
+    "prepack": "node ../../tooling/sync-shared.cjs windows",
+    "prepublishOnly": "npm test",
+    "test": "node ../../tooling/sync-shared.cjs windows && node --check bin/leadsniper-win.cjs && node test/npm-installer-smoke.cjs"
+  },
+  "publishConfig": {"access": "public", "registry": "https://registry.npmjs.org/"},
+  "keywords": ["agent-skill", "codex", "leadsniper", "windows"]
+}

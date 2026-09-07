@@ -1,0 +1,240 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+SKILL_NAME="leadsniper"
+INSTALL_HOME="${LEADSNIPER_INSTALL_HOME:-$HOME}"
+PLATFORM="${LEADSNIPER_INSTALL_TEST_PLATFORM:-$(uname -s)}"
+ARCHITECTURE="${LEADSNIPER_INSTALL_TEST_ARCH:-$(uname -m)}"
+YES=0
+DRY_RUN=0
+LIST_ONLY=0
+INSTALL_ALL=0
+REQUESTED_AGENTS=""
+
+usage() {
+  cat <<'EOF'
+LeadSniper macOS Skill installer
+
+Usage:
+  npx --yes leadsniper@latest
+  npx --yes leadsniper@latest --agent hermes,codex
+  npx --yes leadsniper@latest --all --yes
+
+Platform package:
+  npx --yes leadsniper-mac@latest
+
+Options:
+  --agent <names>  Install into comma-separated Agents
+                    Supports hermes, openclaw, claude, and codex
+  --all            Install into every detected Agent
+  --yes, -y        Update existing installations without prompting
+  --dry-run        Show operations without writing files
+  --list           Show detected Agents and installation paths
+  --help, -h       Show help
+
+Environment:
+  LEADSNIPER_INSTALL_HOME  Override the destination home directory
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --agent)
+      [[ $# -ge 2 && -n "${2:-}" ]] || { echo "Error: --agent requires a value." >&2; exit 2; }
+      REQUESTED_AGENTS="$2"; shift 2 ;;
+    --agent=*) REQUESTED_AGENTS="${1#*=}"; shift ;;
+    --all) INSTALL_ALL=1; shift ;;
+    --yes|-y) YES=1; shift ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    --list) LIST_ONLY=1; shift ;;
+    --help|-h) usage; exit 0 ;;
+    *) echo "Error: unknown option $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+if [[ -n "$REQUESTED_AGENTS" && "$INSTALL_ALL" -eq 1 ]]; then
+  echo "Error: --agent and --all cannot be used together." >&2
+  exit 2
+fi
+
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -h "$SOURCE" ]]; do
+  SOURCE_DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+  LINK_TARGET="$(readlink "$SOURCE")"
+  [[ "$LINK_TARGET" == /* ]] && SOURCE="$LINK_TARGET" || SOURCE="$SOURCE_DIR/$LINK_TARGET"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+PACKAGE_ROOT="$(cd "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)"
+
+for required in SKILL.md README.md LeadSniper start_chrome_debug.sh; do
+  [[ -f "$PACKAGE_ROOT/$required" ]] || { echo "Error: npm package is missing $required." >&2; exit 1; }
+done
+
+if [[ "$PLATFORM" != "Darwin" || "$ARCHITECTURE" != "arm64" ]]; then
+  echo "Error: leadsniper-mac supports only macOS Apple Silicon; current platform is $PLATFORM $ARCHITECTURE." >&2
+  exit 1
+fi
+
+agent_label() {
+  case "$1" in
+    hermes) echo "Hermes Agent" ;;
+    openclaw) echo "OpenClaw" ;;
+    claude) echo "Claude Code" ;;
+    codex) echo "Codex" ;;
+  esac
+}
+
+agent_destination() {
+  case "$1" in
+    hermes) echo "$INSTALL_HOME/.hermes/skills/$SKILL_NAME" ;;
+    openclaw) echo "$INSTALL_HOME/.openclaw/skills/$SKILL_NAME" ;;
+    claude) echo "$INSTALL_HOME/.claude/skills/$SKILL_NAME" ;;
+    codex) echo "$INSTALL_HOME/.agents/skills/$SKILL_NAME" ;;
+  esac
+}
+
+agent_detected() {
+  case "$1" in
+    hermes) command -v hermes >/dev/null 2>&1 || [[ -d "$INSTALL_HOME/.hermes" ]] ;;
+    openclaw) command -v openclaw >/dev/null 2>&1 || [[ -d "$INSTALL_HOME/.openclaw" ]] ;;
+    claude) command -v claude >/dev/null 2>&1 || [[ -d "$INSTALL_HOME/.claude" ]] ;;
+    codex) command -v codex >/dev/null 2>&1 || [[ -d "$INSTALL_HOME/.codex" ]] || [[ -d "$INSTALL_HOME/Applications/Codex.app" ]] ;;
+    *) return 1 ;;
+  esac
+}
+
+normalize_agent() {
+  local value
+  value="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  case "$value" in
+    hermes|hermes-agent) echo hermes ;;
+    openclaw|open-claw) echo openclaw ;;
+    claude|claude-code|claudecode) echo claude ;;
+    codex|openai-codex) echo codex ;;
+    *) return 1 ;;
+  esac
+}
+
+detected_agents=()
+for agent in hermes openclaw claude codex; do
+  agent_detected "$agent" && detected_agents+=("$agent")
+done
+
+print_detection() {
+  echo "Supported LeadSniper Agents:"
+  for agent in hermes openclaw claude codex; do
+    if agent_detected "$agent"; then
+      printf '  [detected]     %-14s %s\n' "$(agent_label "$agent")" "$(agent_destination "$agent")"
+    else
+      printf '  [not detected] %s\n' "$(agent_label "$agent")"
+    fi
+  done
+}
+
+[[ "$LIST_ONLY" -eq 0 ]] || { print_detection; exit 0; }
+
+selected_agents=()
+append_selected() {
+  local candidate="$1" existing
+  for existing in "${selected_agents[@]:-}"; do
+    [[ "$existing" == "$candidate" ]] && return 0
+  done
+  selected_agents+=("$candidate")
+}
+
+if [[ -n "$REQUESTED_AGENTS" ]]; then
+  REQUESTED_AGENTS="${REQUESTED_AGENTS//，/,}"
+  IFS=',' read -r -a requested_items <<< "$REQUESTED_AGENTS"
+  for item in "${requested_items[@]}"; do
+    item="${item//[[:space:]]/}"
+    [[ -n "$item" ]] || continue
+    if ! normalized="$(normalize_agent "$item")"; then
+      echo "Error: unsupported Agent $item." >&2; exit 2
+    fi
+    agent_detected "$normalized" || echo "Warning: $(agent_label "$normalized") was not detected; continuing because it was explicitly requested." >&2
+    append_selected "$normalized"
+  done
+elif [[ "$INSTALL_ALL" -eq 1 ]]; then
+  selected_agents=("${detected_agents[@]}")
+else
+  print_detection
+  echo
+  [[ ${#detected_agents[@]} -gt 0 ]] || { echo "Error: no supported Agent was detected. Use --agent to select one explicitly." >&2; exit 1; }
+  [[ -r /dev/tty && -w /dev/tty ]] || { echo "Error: use --agent or --all in a non-interactive terminal." >&2; exit 1; }
+  echo "Select one or more installation targets (for example 1,3):"
+  for ((i = 0; i < ${#detected_agents[@]}; i++)); do printf '  %d) %s\n' "$((i + 1))" "$(agent_label "${detected_agents[$i]}")"; done
+  echo "  a) All"
+  echo "  q) Quit"
+  read -r -p "Selection: " selection </dev/tty
+  selection="${selection//，/,}"; selection="${selection//[[:space:]]/}"
+  case "$selection" in
+    q|Q) echo "Cancelled."; exit 0 ;;
+    a|A) selected_agents=("${detected_agents[@]}") ;;
+    *)
+      IFS=',' read -r -a selected_numbers <<< "$selection"
+      for number in "${selected_numbers[@]}"; do
+        [[ "$number" =~ ^[0-9]+$ ]] && ((number >= 1 && number <= ${#detected_agents[@]})) || { echo "Error: invalid selection $number." >&2; exit 2; }
+        append_selected "${detected_agents[$((number - 1))]}"
+      done ;;
+  esac
+fi
+
+[[ ${#selected_agents[@]} -gt 0 ]] || { echo "Error: no installation target selected." >&2; exit 1; }
+
+canonical_files=(SKILL.md README.md scripts/LeadSniper scripts/start_chrome_debug.sh)
+installation_exists() {
+  local destination="$1" relative
+  for relative in "${canonical_files[@]}"; do [[ -e "$destination/$relative" ]] && return 0; done
+  return 1
+}
+
+backup_existing_files() {
+  local agent="$1" destination="$2" relative source_file
+  local backup_root="$INSTALL_HOME/.leadsniper-installer/backups/$agent/$(date +%Y%m%d-%H%M%S)-$$"
+  local copied=0
+  for relative in "${canonical_files[@]}"; do
+    source_file="$destination/$relative"
+    [[ -f "$source_file" ]] || continue
+    mkdir -p "$backup_root/$(dirname "$relative")"
+    cp -p "$source_file" "$backup_root/$relative"
+    copied=1
+  done
+  [[ "$copied" -eq 0 ]] || echo "  Previous published files backed up to: $backup_root"
+}
+
+atomic_copy() {
+  local source_file="$1" destination_file="$2" mode="$3"
+  local temporary_file="${destination_file}.leadsniper-new-$$"
+  mkdir -p "$(dirname "$destination_file")"
+  cp -p "$source_file" "$temporary_file"
+  chmod "$mode" "$temporary_file"
+  mv "$temporary_file" "$destination_file"
+}
+
+install_agent() {
+  local agent="$1" destination answer
+  destination="$(agent_destination "$agent")"
+  echo
+  echo "Installing into $(agent_label "$agent"): $destination"
+  if installation_exists "$destination" && [[ "$YES" -ne 1 && "$DRY_RUN" -ne 1 ]]; then
+    [[ -r /dev/tty && -w /dev/tty ]] || { echo "Error: installation exists; add --yes for a non-interactive update." >&2; return 1; }
+    read -r -p "  LeadSniper exists. Back up and update it? [y/N] " answer </dev/tty
+    [[ "$answer" =~ ^[Yy]$ ]] || { echo "  Skipped."; return 0; }
+  fi
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "  [dry-run] Published files would be updated; configuration and user data would be preserved."
+    return 0
+  fi
+  installation_exists "$destination" && backup_existing_files "$agent" "$destination"
+  atomic_copy "$PACKAGE_ROOT/SKILL.md" "$destination/SKILL.md" 644
+  atomic_copy "$PACKAGE_ROOT/README.md" "$destination/README.md" 644
+  atomic_copy "$PACKAGE_ROOT/LeadSniper" "$destination/scripts/LeadSniper" 755
+  atomic_copy "$PACKAGE_ROOT/start_chrome_debug.sh" "$destination/scripts/start_chrome_debug.sh" 755
+  [[ -x "$destination/scripts/LeadSniper" && -x "$destination/scripts/start_chrome_debug.sh" ]] || { echo "Error: executable verification failed." >&2; return 1; }
+  echo "  Installation complete. Configuration, browser profiles, databases, and output data were preserved."
+}
+
+for agent in "${selected_agents[@]}"; do install_agent "$agent"; done
+echo
+[[ "$DRY_RUN" -eq 1 ]] && echo "Dry run complete; no files were written." || echo "LeadSniper installation complete. Start a new Agent session to reload its Skill list."

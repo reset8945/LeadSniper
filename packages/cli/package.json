@@ -1,0 +1,20 @@
+{
+  "name": "leadsniper",
+  "version": "0.1.0",
+  "description": "Install LeadSniper for the current operating system into Hermes, OpenClaw, Claude Code, or Codex.",
+  "license": "SEE LICENSE IN LICENSE",
+  "homepage": "https://github.com/reset8945/LeadSniper#readme",
+  "repository": {"type": "git", "url": "git+https://github.com/reset8945/LeadSniper.git"},
+  "bugs": {"url": "https://github.com/reset8945/LeadSniper/issues"},
+  "bin": {"leadsniper": "bin/leadsniper.cjs"},
+  "files": ["bin/leadsniper.cjs", "README.md", "LICENSE"],
+  "engines": {"node": ">=18", "npm": ">=9"},
+  "optionalDependencies": {"leadsniper-mac": "0.1.0", "leadsniper-win": "0.1.0"},
+  "scripts": {
+    "prepack": "node ../../tooling/sync-shared.cjs cli",
+    "prepublishOnly": "npm test",
+    "test": "node test/dispatcher-smoke.cjs"
+  },
+  "publishConfig": {"access": "public", "registry": "https://registry.npmjs.org/"},
+  "keywords": ["agent-skill", "claude-code", "codex", "lead-generation", "openclaw", "leadsniper"]
+}

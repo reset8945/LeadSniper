@@ -1,0 +1,8 @@
+.DS_Store
+.npm-cache/
+node_modules/
+npm-debug.log*
+
+# Generated from repository-level source documents before tests and packing.
+/packages/*/README.md
+/packages/*/LICENSE
